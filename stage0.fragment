@@ -1,0 +1,5 @@
+# Stage 0 config fragment: skip BTF generation.
+# BTF is not needed to boot; the pahole/BTF step is the most memory-hungry
+# part of the link and was where the runner was terminated.
+# CONFIG_DEBUG_INFO_BTF is not set
+# CONFIG_DEBUG_INFO_BTF_MODULES is not set

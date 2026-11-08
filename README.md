@@ -73,6 +73,10 @@ The kernel only replaces `boot`; `vendor_boot`, `dtbo`, and `vendor_dlkm` are un
 
 ## Notes and known risks
 
+- The repo is public so standard GitHub-hosted runners are not billed against the account's
+  private-repo minutes. Only write-access collaborators can dispatch workflows.
+- The build disables `CONFIG_DEBUG_INFO_BTF` via `stage0.fragment`; BTF is not needed for a
+  boot test and it is the most memory-hungry part of the final link.
 - Bootloader must be **unlocked**. Unlocking wipes data.
 - `anykernel.sh` checks `ro.product.device` against `tapas`/`topaz`. If your ROM reports
   something else, edit `device.name1`/`device.name2`.
