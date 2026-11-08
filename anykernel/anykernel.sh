@@ -32,5 +32,7 @@ PATCH_VBMETA_FLAG=auto;
 # shellcheck disable=SC1091
 . tools/ak3-core.sh;
 
-dump_boot;
-write_boot;
+# boot.img on this device is header v4 with an empty ramdisk (the real ramdisk
+# lives in init_boot/vendor_boot), so skip ramdisk unpack/repack entirely.
+split_boot;
+flash_boot;
