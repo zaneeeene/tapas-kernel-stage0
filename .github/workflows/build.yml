@@ -164,11 +164,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${FINAL_DIR}"
+          # _setup_env.sh resolves fragment paths relative to ROOT_DIR
+          cp "${GITHUB_WORKSPACE}/stage0.fragment" ./stage0.fragment
 
           for config in ${BUILD_CONFIGS}; do
             echo "::group::Building ${config}"
             BUILD_CONFIG="common/${config}" \
-              BUILD_CONFIG_FRAGMENTS="${GITHUB_WORKSPACE}/stage0.fragment" \
+              BUILD_CONFIG_FRAGMENTS="stage0.fragment" \
               ${EXTRA_ARGS} build/build.sh
             echo "::endgroup::"
 
