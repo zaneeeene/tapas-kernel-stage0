@@ -65,7 +65,7 @@ The kernel only replaces `boot`; `vendor_boot`, `dtbo`, and `vendor_dlkm` are un
 | `build_configs` | `build.config.gki.aarch64.chickernel` | Add `...chickernel.ksun` / `...chickernel.ksun.susfs` for root variants |
 | `kernel_image_type` | `Image` | `Image.gz` / `Image.lz4` also supported |
 | `fast_build` | `true` | ThinLTO, faster |
-| `use_latest_clang` | `false` | Keep `false` to use the branch-pinned clang; try `true` only if it fails |
+| `use_latest_clang` | `true` | This tree pins `clang-r547379`, which the ACK 5.15 manifest does not ship; the workflow syncs the `main` clang prebuilts. Set `false` only if you switch to a tree whose `build.config.constants` matches the ACK-pinned clang. |
 | `ack_branch` | `common-android13-5.15` | Workspace + prebuilts |
 | `kernel_repo` | ChicKernel tree | Swap later for your own fork/tree |
 | `kernel_repo_branch` | `android13-5.15-lts` | |
