@@ -1,0 +1,4 @@
+kernel-build/
+out/
+*.img
+*.zip

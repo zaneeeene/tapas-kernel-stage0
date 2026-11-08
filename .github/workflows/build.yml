@@ -1,0 +1,216 @@
+# Stage 0 CI: build a 5.15 GKI kernel for Redmi Note 12 4G (tapas/topaz, SM6225 "khaje")
+# Adapted from chkndrp/ack-build-workflow (GPL-3.0).
+
+name: Build tapas 5.15 kernel
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_configs:
+        description: 'Space-separated build configs (files under common/)'
+        required: true
+        default: 'build.config.gki.aarch64.chickernel'
+        type: string
+      kernel_image_type:
+        description: 'Kernel image to package (Image, Image.gz, Image.lz4, ...)'
+        required: true
+        default: 'Image'
+        type: string
+      fast_build:
+        description: 'Fast build (ThinLTO, skips some optimizations)'
+        required: true
+        default: true
+        type: boolean
+      use_latest_clang:
+        description: 'Use latest clang prebuilts (only if the pinned clang fails)'
+        required: true
+        default: false
+        type: boolean
+      ack_branch:
+        description: 'ACK branch for workspace + prebuilts'
+        required: true
+        default: 'common-android13-5.15'
+        type: string
+      kernel_repo:
+        description: 'Kernel repo replacing kernel/common'
+        required: true
+        default: 'https://github.com/ChicKernel/device_xiaomi_gemstones-kernel'
+        type: string
+      kernel_repo_branch:
+        description: 'Kernel repo branch'
+        required: true
+        default: 'android13-5.15-lts'
+        type: string
+      ak3_repo:
+        description: 'AnyKernel3 repo'
+        required: true
+        default: 'https://github.com/osm0sis/AnyKernel3'
+        type: string
+      extra_args:
+        description: 'Extra args passed to build.sh (optional)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      BUILD_CONFIGS: ${{ inputs.build_configs }}
+      IMAGE_TYPE: ${{ inputs.kernel_image_type }}
+      ACK_BRANCH: ${{ inputs.ack_branch }}
+      KERNEL_REPO: ${{ inputs.kernel_repo }}
+      KERNEL_REPO_BRANCH: ${{ inputs.kernel_repo_branch }}
+      AK3_REPO: ${{ inputs.ak3_repo }}
+      WORK: ${{ github.workspace }}/kernel-build
+      FINAL_DIR: ${{ github.workspace }}/kernel-build/final_images
+      AK3_DIR: ${{ github.workspace }}/kernel-build/anykernel3
+
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          validate_url() {
+            [[ "$1" =~ ^https://.+/.+/.+$ ]] || { echo "Invalid URL: $1"; exit 1; }
+          }
+          validate_url "${KERNEL_REPO}"
+          validate_url "${AK3_REPO}"
+          for v in "${ACK_BRANCH}" "${KERNEL_REPO_BRANCH}" "${IMAGE_TYPE}"; do
+            [[ "$v" =~ [[:space:]] ]] && { echo "Input must not contain spaces: $v"; exit 1; }
+          done
+          echo "Configs: ${BUILD_CONFIGS}"
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Install host dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex libssl-dev libelf-dev rsync cpio lz4 zstd zip unzip \
+            python3 python3-pip dwarves
+          df -h /
+
+      - name: Create workspace and local manifest
+        run: |
+          set -euo pipefail
+          REPO_SOURCE=$(echo "${KERNEL_REPO}" | cut -d'/' -f3)
+          REPO_OWNER=$(echo "${KERNEL_REPO}" | cut -d'/' -f4)
+          REPO_NAME=$(echo "${KERNEL_REPO}" | cut -d'/' -f5)
+
+          mkdir -p "${WORK}/.repo/local_manifests"
+          MANIFEST="${WORK}/.repo/local_manifests/custom.xml"
+
+          {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<manifest>'
+            echo "  <remote name=\"common-repo\" fetch=\"https://${REPO_SOURCE}/${REPO_OWNER}\" />"
+            echo '  <remove-project name="kernel/common" />'
+            echo "  <project path=\"common\" name=\"${REPO_NAME}\" remote=\"common-repo\" revision=\"${KERNEL_REPO_BRANCH}\">"
+            echo '    <linkfile src="." dest=".source_date_epoch_dir" />'
+            echo '  </project>'
+            if [ "${{ inputs.use_latest_clang }}" = "true" ]; then
+              echo '  <remove-project name="platform/prebuilts/clang/host/linux-x86" />'
+              echo '  <project path="prebuilts/clang/host/linux-x86" name="platform/prebuilts/clang/host/linux-x86" revision="main" clone-depth="1" />'
+            fi
+            echo '</manifest>'
+          } > "${MANIFEST}"
+          cat "${MANIFEST}"
+
+      - name: Fetch repo tool and AnyKernel3
+        run: |
+          set -euo pipefail
+          git clone --depth=1 "${AK3_REPO}" "${AK3_DIR}"
+          mkdir -p "${HOME}/.bin"
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo > "${HOME}/.bin/repo"
+          chmod a+rx "${HOME}/.bin/repo"
+          echo "${HOME}/.bin" >> "${GITHUB_PATH}"
+
+      - name: Repo init and sync
+        working-directory: ${{ env.WORK }}
+        run: |
+          set -euo pipefail
+          repo init --no-tags --depth=1 --dissociate \
+            -u https://android.googlesource.com/kernel/manifest \
+            -b "${ACK_BRANCH}"
+          repo sync --no-tags --clone-bundle --current-branch \
+            --optimized-fetch --force-sync --fetch-submodules \
+            -j"$(nproc --all)"
+          df -h /
+
+      - name: Build kernel
+        working-directory: ${{ env.WORK }}
+        env:
+          FAST_BUILD: ${{ inputs.fast_build && '1' || '0' }}
+          EXTRA_ARGS: ${{ inputs.extra_args }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${FINAL_DIR}"
+
+          for config in ${BUILD_CONFIGS}; do
+            echo "::group::Building ${config}"
+            BUILD_CONFIG="common/${config}" ${EXTRA_ARGS} build/build.sh
+            echo "::endgroup::"
+
+            IMG=$(find out -type f -name "${IMAGE_TYPE}" -path '*/dist/*' | head -n1 || true)
+            if [ -z "${IMG}" ]; then
+              IMG=$(find out -type f -name "${IMAGE_TYPE}" | head -n1 || true)
+            fi
+            if [ -z "${IMG}" ]; then
+              echo "::error::No ${IMAGE_TYPE} produced for ${config}"
+              find out -maxdepth 4 -name 'Image*' -o -name '*.ko' | head -n40 || true
+              exit 1
+            fi
+
+            cp "${IMG}" "${FINAL_DIR}/${IMAGE_TYPE}-${config}"
+            echo "Built: ${IMG}"
+            strings "${IMG}" | grep -m1 'Linux version' || true
+          done
+
+          ls -lh "${FINAL_DIR}"
+
+      - name: Package with AnyKernel3
+        working-directory: ${{ env.WORK }}
+        run: |
+          set -euo pipefail
+          for config in ${BUILD_CONFIGS}; do
+            src="${FINAL_DIR}/${IMAGE_TYPE}-${config}"
+            [ -f "${src}" ] || continue
+
+            dst="${AK3_DIR}-${config}"
+            rm -rf "${dst}"
+            cp -r "${AK3_DIR}" "${dst}"
+            cp "${src}" "${dst}/${IMAGE_TYPE}"
+            cp "${GITHUB_WORKSPACE}/anykernel/anykernel.sh" "${dst}/anykernel.sh"
+
+            ( cd "${dst}" && zip -r9 "${FINAL_DIR}/${config}.zip" . -x '.git/*' 'README.md' '*placeholder' >/dev/null )
+          done
+          ls -lh "${FINAL_DIR}"
+
+      - name: Upload kernel packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-packages
+          path: |
+            kernel-build/final_images/*.zip
+            kernel-build/final_images/Image-*
+          if-no-files-found: error
+          retention-days: 14
