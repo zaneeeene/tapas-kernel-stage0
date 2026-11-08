@@ -76,6 +76,9 @@ jobs:
       AK3_DIR: ${{ github.workspace }}/kernel-build/anykernel3
 
     steps:
+      - name: Check out build harness
+        uses: actions/checkout@v4
+
       - name: Validate inputs
         run: |
           set -euo pipefail
